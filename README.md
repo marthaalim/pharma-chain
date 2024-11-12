@@ -125,8 +125,8 @@ initiateRecall: (payload: RecallAlertPayload) => Result<RecallAlert, Error>
 
 1. Clone the repository
 ```bash
-git clone <repository-url>
-cd pharmaceutical-supply-chain
+git clone https://github.com/marthaalim/pharma-chain.git
+cd pharma-chain
 ```
 
 2. Install dependencies
@@ -136,7 +136,7 @@ npm install
 
 3. Start the local replica
 ```bash
-dfx start --background --clean
+dfx start --clean --background
 ```
 
 4. Deploy the canister
