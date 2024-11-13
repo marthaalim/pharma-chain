@@ -349,181 +349,16 @@ export default Canister({
     }
   ),
 
-  // Create Reward with validation
-  createReward: update([RewardPayload], Result(Reward, Error), (payload) => {
-    // Validate the payload
-    if (!payload.participantId || !payload.points || !payload.rewardType) {
-      return Err({ InvalidPayload: "Ensure all required fields are provided" });
-    }
-
-    // Validate participant ID
-    const userOpt = usersStorage.get(payload.participantId);
-    if ("None" in userOpt) {
-      return Err({
-        NotFound: `User with ID ${payload.participantId} not found`,
-      });
-    }
-
-    const id = uuidv4();
-    const reward = {
-      id,
-      participantId: payload.participantId,
-      points: payload.points,
-      rewardType: payload.rewardType,
-    };
-
-    // Update user points
-    const user = userOpt.Some;
-
-    // Update user points
-    user.points += payload.points;
-
-    // Update user in storage
-    usersStorage.insert(payload.participantId, user);
-
-    // Insert reward into storage
-    rewardsStorage.insert(id, reward);
-    return Ok(reward);
-  }),
-
-  // Querying Functions
-  getPharmaceuticalHistory: query(
-    [text],
-    Result(Vec(SupplyChainEvent), Error),
-    (pharmaceuticalId) => {
-      const events = supplyChainEventsStorage
-        .values()
-        .filter((event) => event.pharmaceuticalId === pharmaceuticalId);
-
-      if (events.length === 0) {
-        return Err({ NotFound: "No events found for this pharmaceutical" });
-      }
-
-      return Ok(events);
-    }
-  ),
-
-  getAllPharmaceuticals: query([], Result(Vec(Pharmaceutical), Error), () => {
-    const pharmaceuticals = pharmaceuticalsStorage.values();
-    if (pharmaceuticals.length === 0) {
-      return Err({ NotFound: "No pharmaceuticals found" });
-    }
-    return Ok(pharmaceuticals);
-  }),
-
-  getAllSupplyChainEvents: query(
-    [],
-    Result(Vec(SupplyChainEvent), Error),
-    () => {
-      const events = supplyChainEventsStorage.values();
-      if (events.length === 0) {
-        return Err({ NotFound: "No supply chain events found" });
-      }
-      return Ok(events);
-    }
-  ),
-
-  getAllRewards: query([], Result(Vec(Reward), Error), () => {
-    const rewards = rewardsStorage.values();
-    if (rewards.length === 0) {
-      return Err({ NotFound: "No rewards found" });
-    }
-    return Ok(rewards);
-  }),
-
-  // Quality Control Functions
-  submitQualityCheck: update(
-    [QualityCheckPayload],
-    Result(QualityCheck, Error),
-    (payload) => {
-      if (!payload.pharmaceuticalId || !payload.inspectorId) {
-        return Err({ InvalidPayload: "Required fields missing" });
-      }
-
-      // Validate Pharmaceutical ID
-      const pharmaceuticalOpt = pharmaceuticalsStorage.get(
-        payload.pharmaceuticalId
-      );
-      if ("None" in pharmaceuticalOpt) {
-        return Err({
-          NotFound: `Pharmaceutical with ID ${payload.pharmaceuticalId} not found`,
-        });
-      }
-
-      // Validate Inspector ID
-      const inspectorOpt = usersStorage.get(payload.inspectorId);
-
-      if ("None" in inspectorOpt) {
-        return Err({
-          NotFound: `User with ID ${payload.inspectorId} not found`,
-        });
-      }
-
-      const id = uuidv4();
-      const qualityCheck = {
-        id,
-        ...payload,
-        timestamp: ic.time(),
-      };
-
-      qualityChecksStorage.insert(id, qualityCheck);
-
-      // Create event for quality control
-      const eventId = uuidv4();
-      const event = {
-        id: eventId,
-        pharmaceuticalId: payload.pharmaceuticalId,
-        eventType: { QualityControl: null },
-        location: "Quality Control Lab",
-        date: ic.time(),
-        participantId: payload.inspectorId,
-      };
-
-      supplyChainEventsStorage.insert(eventId, event);
-
-      // Award points for quality check
-      if (payload.passed) {
-        const rewardId = uuidv4();
-        const reward = {
-          id: rewardId,
-          participantId: payload.inspectorId,
-          points: 15n,
-          rewardType: { QualityReport: null },
-        };
-
-        // Update user points
-        const user = inspectorOpt.Some;
-
-        // Update user points
-        user.points += 15n;
-
-        // Update user in storage
-        usersStorage.insert(payload.inspectorId, user);
-
-        // Insert reward into storage
-        rewardsStorage.insert(rewardId, reward);
-      }
-
-      return Ok(qualityCheck);
-    }
-  ),
-
-  // Temperature Monitoring
+  // Temperature Log Management
   logTemperature: update(
     [TemperatureLogPayload],
     Result(TemperatureLog, Error),
     (payload) => {
-      const pharmaceuticalOpt = pharmaceuticalsStorage.get(
-        payload.pharmaceuticalId
-      );
-      if ("None" in pharmaceuticalOpt) {
-        return Err({ NotFound: "Pharmaceutical not found" });
-      }
+      // Check if temperature is within the acceptable range
+      const isExcursion = payload.temperature < 2 || payload.temperature > 8;
 
       const id = uuidv4();
-      const isExcursion = payload.temperature > 25n || payload.temperature < 2n;
-
-      const tempLog = {
+      const temperatureLog = {
         id,
         pharmaceuticalId: payload.pharmaceuticalId,
         temperature: payload.temperature,
@@ -532,188 +367,35 @@ export default Canister({
         isExcursion,
       };
 
-      temperatureLogsStorage.insert(id, tempLog);
+      temperatureLogsStorage.insert(id, temperatureLog);
 
       if (isExcursion) {
-        const eventId = uuidv4();
-        const event = {
-          id: eventId,
-          pharmaceuticalId: payload.pharmaceuticalId,
-          eventType: { TemperatureExcursion: null },
-          location: payload.location,
-          date: ic.time(),
-          participantId: ic.caller().toString(),
-        };
-        supplyChainEventsStorage.insert(eventId, event);
-
-        return Err({
-          TemperatureExcursion: `Temperature excursion detected: ${payload.temperature}°C`,
-        });
+        return Err({ TemperatureExcursion: "Temperature excursion detected" });
       }
 
-      return Ok(tempLog);
+      return Ok(temperatureLog);
     }
   ),
 
-  // Recall Management
-  initiateRecall: update(
-    [RecallAlertPayload],
-    Result(RecallAlert, Error),
-    (payload) => {
-      // Validate the payload
-      if (
-        !payload.pharmaceuticalId ||
-        !payload.initiatedBy ||
-        !payload.severity ||
-        !payload.reason ||
-        !payload.affectedBatches
-      ) {
-        return Err({
-          InvalidPayload: "Ensure all required fields are provided",
-        });
-      }
+  // Analytics
+  getQualityMetrics: query([], QualityMetricsResponse, () => {
+    const allQualityChecks = qualityChecksStorage.values();
+    const totalChecks = allQualityChecks.length;
+    let passCount = 0;
+    let totalTemperature = 0n;
+    let totalHumidity = 0n;
 
-      // Validate pharmaceutical ID
-      const pharmaceuticalOpt = pharmaceuticalsStorage.get(
-        payload.pharmaceuticalId
-      );
-      if ("None" in pharmaceuticalOpt) {
-        return Err({ NotFound: "Pharmaceutical not found" });
-      }
+    allQualityChecks.forEach((check) => {
+      if (check.passed) passCount++;
+      totalTemperature += check.temperature;
+      totalHumidity += check.humidity;
+    });
 
-      // Validate initiator ID
-      const initiatorOpt = usersStorage.get(payload.initiatedBy);
-      if ("None" in initiatorOpt) {
-        return Err({ NotFound: "Initiator not found" });
-      }
-
-      // Validate severity
-      if (!["Low", "Medium", "High", "Critical"].includes(payload.severity)) {
-        return Err({
-          ValidationError:
-            "Invalid severity level. Must be Low, Medium, High, or Critical",
-        });
-      }
-
-      const id = uuidv4();
-      const recall = {
-        id,
-        ...payload,
-        initiatedDate: ic.time(),
-        status: "Active",
-      };
-
-      recallAlertsStorage.insert(id, recall);
-
-      // Create recall event
-      const eventId = uuidv4();
-      const event = {
-        id: eventId,
-        pharmaceuticalId: payload.pharmaceuticalId,
-        eventType: { RecallInitiated: null },
-        location: "System",
-        date: ic.time(),
-        participantId: payload.initiatedBy,
-      };
-
-      supplyChainEventsStorage.insert(eventId, event);
-
-      // Award points for recall management
-      const rewardId = uuidv4();
-      const reward = {
-        id: rewardId,
-        participantId: payload.initiatedBy,
-        points: 25n,
-        rewardType: { RecallManagement: null },
-      };
-
-      // Update user points
-      const userOpt = usersStorage.get(payload.initiatedBy);
-
-      if ("None" in userOpt) {
-        return Err({ NotFound: "User not found" });
-      }
-
-      const user = userOpt.Some;
-
-      // Update user points
-      user.points += 25n;
-
-      // Update user in storage
-      usersStorage.insert(payload.initiatedBy, user);
-
-      // Insert reward into storage
-      rewardsStorage.insert(rewardId, reward);
-
-      return Ok(recall);
-    }
-  ),
-
-  // Analytics Functions
-  getQualityMetrics: query(
-    [text],
-    Result(QualityMetricsResponse, Error),
-    (pharmaceuticalId) => {
-      const checks = qualityChecksStorage
-        .values()
-        .filter((check) => check.pharmaceuticalId === pharmaceuticalId);
-
-      if (checks.length === 0) {
-        return Err({
-          NotFound: "No quality checks found for this pharmaceutical",
-        });
-      }
-
-      const totalChecks = BigInt(checks.length);
-      const passedChecks = BigInt(
-        checks.filter((check) => check.passed).length
-      );
-      const passRate = (passedChecks * 100n) / totalChecks;
-
-      const totalTemp = checks.reduce(
-        (sum, check) => sum + check.temperature,
-        0n
-      );
-      const totalHumidity = checks.reduce(
-        (sum, check) => sum + check.humidity,
-        0n
-      );
-
-      return Ok({
-        totalChecks,
-        passRate,
-        averageTemperature: totalTemp / totalChecks,
-        averageHumidity: totalHumidity / totalChecks,
-      });
-    }
-  ),
-
-  // Query Functions
-  getActiveRecalls: query([], Result(Vec(RecallAlert), Error), () => {
-    const recalls = recallAlertsStorage
-      .values()
-      .filter((recall) => recall.status === "Active");
-
-    if (recalls.length === 0) {
-      return Err({ NotFound: "No active recalls found" });
-    }
-    return Ok(recalls);
+    return {
+      totalChecks: totalChecks,
+      passRate: passCount,
+      averageTemperature: totalTemperature / totalChecks.length,
+      averageHumidity: totalHumidity / totalChecks.length,
+    };
   }),
-
-  getTemperatureExcursions: query(
-    [text],
-    Result(Vec(TemperatureLog), Error),
-    (pharmaceuticalId) => {
-      const excursions = temperatureLogsStorage
-        .values()
-        .filter(
-          (log) => log.pharmaceuticalId === pharmaceuticalId && log.isExcursion
-        );
-
-      if (excursions.length === 0) {
-        return Err({ NotFound: "No temperature excursions found" });
-      }
-      return Ok(excursions);
-    }
-  ),
 });
